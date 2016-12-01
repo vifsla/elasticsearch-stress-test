@@ -245,14 +245,40 @@ def client_indices_worker(es, indices, STARTED_TIMESTAMP):
             # Failed. incrementing failure
             increment_failure()
 
+def client_search_worker(es, search_params, STARTED_TIMESTAMP):
+     # Running until timeout
+    while (not has_timeout(STARTED_TIMESTAMP)) and (not shutdown_event.is_set()):
+        for sp in search_params:
+            try:
+                es.search(index=sp, request_timeout=300)
+                increment_success()
 
-def generate_indices_clients(es, indices, STARTED_TIMESTAMP):
+
+            except Exception as e:
+
+                print("Could not perform search")
+                print(e)
+                # Failed. incrementing failure
+                increment_failure()
+
+
+def generate_clients(es, req_params, STARTED_TIMESTAMP):
     # Clients placeholder
     temp_clients = []
 
     # Iterate over the clients count
     for _ in range(NUMBER_OF_CLIENTS):
-        temp_thread = Thread(target=client_indices_worker, args=[es, indices, STARTED_TIMESTAMP])
+
+        if MODE == "index" :
+            if req_params == []:
+                print ("no indices provided. exit")
+                sys.exit(1)
+            else:
+                temp_thread = Thread(target=client_indices_worker, args=[es, req_params, STARTED_TIMESTAMP])
+
+        elif MODE == "search":
+            temp_thread = Thread(target=client_search_worker, args=[es, req_params, STARTED_TIMESTAMP])  
+
         temp_thread.daemon = True
 
         # Create a thread and push it to the list
@@ -303,11 +329,21 @@ def generate_indices(es):
             except Exception as e:
                 print("Could not create index. Is your cluster ok?")
                 print(e)
+                print("Exit.")
+                sys.exit(1)
+
 
     # Return the indices
     return temp_indices
 
-#def search_queries(es):
+
+def generate_search_queries(INDICES_NAMELIST_FILE):
+    
+    temp_search_queries = []
+    if INDICES_NAMELIST_FILE:
+        temp_search_queries = read_file_to_list(INDICES_NAMELIST_FILE)
+
+    return temp_search_queries
 
 
 def cleanup_indices(es, indices):
@@ -331,7 +367,6 @@ def cleanall_indices(es):
 
 
 
-
 def print_stats(STARTED_TIMESTAMP):
     # Calculate elpased time
     elapsed_time = (int(time.time()) - STARTED_TIMESTAMP)
@@ -347,9 +382,17 @@ def print_stats(STARTED_TIMESTAMP):
 
     # Print stats to the user
     print("Elapsed time: {0} seconds".format(elapsed_time))
-    print("Successful bulks: {0} ({1} documents)".format(success_bulks, (success_bulks * BULK_SIZE)))
-    print("Failed bulks: {0} ({1} documents)".format(failed_bulks, (failed_bulks * BULK_SIZE)))
-    print("Indexed approximately {0} MB which is {1:.2f} MB/s".format(size_mb, mbs))
+
+    if MODE == "index":  
+        print("Successful bulks: {0} ({1} documents)".format(success_bulks, (success_bulks * BULK_SIZE)))
+        print("Failed bulks: {0} ({1} documents)".format(failed_bulks, (failed_bulks * BULK_SIZE)))
+        print("Indexed approximately {0} MB which is {1:.2f} MB/s".format(size_mb, mbs))
+
+    elif MODE == "search":    
+
+        print("Successful search queries: {0}".format(success_bulks))
+        print("Failed search queries: {0}".format(failed_bulks))
+
     print("")
 
 
@@ -428,16 +471,22 @@ def main():
                 continue
 
             print("Generating documents and workers.. ")  # Generate the clients
-            clients.extend(generate_indices_clients(es, indices, STARTED_TIMESTAMP))
+            clients.extend(generate_clients(es, indices, STARTED_TIMESTAMP))
 
-            print("Done!")
 
-        #elif MODE == "search":
 
+        elif MODE == "search":
+
+            search_queries = generate_search_queries(INDICES_NAMELIST_FILE)
+
+            print("Generating search queries and workers.. ")  # Generate the clients
+            clients.extend(generate_clients(es, search_queries, STARTED_TIMESTAMP))
 
         else:
             print("please provide correct --mode prarmeter: 'index', 'search' or 'cleanall'")
             sys.exit(1)
+
+        print("Done!")
 
         print("Starting the test. Will print stats every {0} seconds.".format(STATS_FREQUENCY))
         print("The test would run for {0} seconds, but it might take a bit more "
