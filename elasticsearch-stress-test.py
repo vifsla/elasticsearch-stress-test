@@ -67,6 +67,7 @@ parser.add_argument("--no-cleanup", default=False, action='store_true', help="Do
 
 ##################
 #settings for search requests
+parser.add_argument("--indicesnameslist-file", help="list of indices names, for indexing or search; each name starts with new line")
 
 ##################
 #settings for cleaning ES
@@ -96,6 +97,7 @@ STATS_FREQUENCY = args.stats_frequency
 WAIT_FOR_GREEN = args.green
 CLEANALL = args.cleanall
 MODE = args.mode
+INDICES_NAMELIST_FILE = args.indicesnameslist_file
 
 # timestamp placeholder
 STARTED_TIMESTAMP = 0
@@ -181,6 +183,11 @@ def generate_random_string(max_size):
     return ''.join(choice(string.ascii_lowercase) for _ in range(generate_random_int(max_size)))
 
 
+def read_file_to_list(filename):
+    with open(filename) as f:
+        list = f.readlines()
+    return list
+
 # Create a document template
 def generate_document():
     temp_doc = {}
@@ -211,7 +218,7 @@ def fill_documents(documents_templates):
         documents.append(temp_doc)
 
 
-def client_worker(es, indices, STARTED_TIMESTAMP):
+def client_indices_worker(es, indices, STARTED_TIMESTAMP):
     # Running until timeout
     while (not has_timeout(STARTED_TIMESTAMP)) and (not shutdown_event.is_set()):
 
@@ -239,13 +246,13 @@ def client_worker(es, indices, STARTED_TIMESTAMP):
             increment_failure()
 
 
-def generate_clients(es, indices, STARTED_TIMESTAMP):
+def generate_indices_clients(es, indices, STARTED_TIMESTAMP):
     # Clients placeholder
     temp_clients = []
 
     # Iterate over the clients count
     for _ in range(NUMBER_OF_CLIENTS):
-        temp_thread = Thread(target=client_worker, args=[es, indices, STARTED_TIMESTAMP])
+        temp_thread = Thread(target=client_indices_worker, args=[es, indices, STARTED_TIMESTAMP])
         temp_thread.daemon = True
 
         # Create a thread and push it to the list
@@ -271,26 +278,36 @@ def generate_documents():
 def generate_indices(es):
     # Placeholder
     temp_indices = []
+    number_of_indices = 0
 
     # Iterate over the indices count
-    for _ in range(NUMBER_OF_INDICES):
-        # Generate the index name
-        temp_index = generate_random_string(16)
+    if INDICES_NAMELIST_FILE:
+        temp_indices = read_file_to_list(INDICES_NAMELIST_FILE)
+        number_of_indices = len(temp_indices)
 
-        # Push it to the list
-        temp_indices.append(temp_index)
+    else:
+        number_of_indices = range(NUMBER_OF_INDICES)
+        print
+        for _ in number_of_indices:
+            # Generate the index name
+            temp_index = generate_random_string(16)
 
-        try:
-            # And create it in ES with the shard count and replicas
-            es.indices.create(index=temp_index, body={"settings": {"number_of_shards": NUMBER_OF_SHARDS,
-                                                                   "number_of_replicas": NUMBER_OF_REPLICAS}}, request_timeout=90)
+            # Push it to the list
+            temp_indices.append(temp_index)
 
-        except Exception as e:
-            print("Could not create index. Is your cluster ok?")
-            print(e)
+        for i in temp_indices:
+            try:
+                # And create it in ES with the shard count and replicas
+                es.indices.create(index=i, body={"settings": {"number_of_shards": NUMBER_OF_SHARDS,
+                                                                       "number_of_replicas": NUMBER_OF_REPLICAS}}, request_timeout=90)
+            except Exception as e:
+                print("Could not create index. Is your cluster ok?")
+                print(e)
 
     # Return the indices
     return temp_indices
+
+#def search_queries(es):
 
 
 def cleanup_indices(es, indices):
@@ -310,6 +327,9 @@ def cleanall_indices(es):
     except Exception as e:
         print("Problem with es cleaning")
         print(e.message)
+
+
+
 
 
 def print_stats(STARTED_TIMESTAMP):
@@ -384,7 +404,7 @@ def main():
 
             sys.exit(1)
 
-        if MODE == "index":
+        elif MODE == "index":
                 # Generate docs
             documents_templates = generate_documents()
             fill_documents(documents_templates)
@@ -408,10 +428,16 @@ def main():
                 continue
 
             print("Generating documents and workers.. ")  # Generate the clients
-            clients.extend(generate_clients(es, indices, STARTED_TIMESTAMP))
+            clients.extend(generate_indices_clients(es, indices, STARTED_TIMESTAMP))
 
             print("Done!")
 
+        #elif MODE == "search":
+
+
+        else:
+            print("please provide correct --mode prarmeter: 'index', 'search' or 'cleanall'")
+            sys.exit(1)
 
         print("Starting the test. Will print stats every {0} seconds.".format(STATS_FREQUENCY))
         print("The test would run for {0} seconds, but it might take a bit more "
@@ -463,7 +489,7 @@ def main():
 
             print("Done!")  # # Main runner
 
-            if MODE == "index":
+
 
 
 try:
